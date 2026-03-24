@@ -29,6 +29,10 @@ _lib.generate_keypair.argtypes = [ctypes.POINTER(CHiggaionKey), ctypes.c_char_p]
 # void higgaion_key_free(HiggaionKey *key);
 _lib.higgaion_key_free.argtypes = [ctypes.POINTER(CHiggaionKey)]
 
+# bool higgaion_key_up_ref(HiggaionKey *dst, const HiggaionKey *src);
+_lib.higgaion_key_up_ref.argtypes = [ctypes.POINTER(CHiggaionKey), ctypes.POINTER(CHiggaionKey)]
+_lib.higgaion_key_up_ref.restype = ctypes.c_bool
+
 # void pqc_sign(uint8_t **signature, size_t *sig_len, const uint8_t *message, size_t msg_len, const char *domain, const HiggaionKey *sk);
 _lib.pqc_sign.argtypes = [
     ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
@@ -104,6 +108,13 @@ class PrivateKey:
 class PublicKey:
     def __init__(self, c_key: CHiggaionKey):
         self._key = c_key
+        self._owns_memory = True
+
+    def __del__(self):
+        """Free the independently reference-counted EVP_PKEY on GC."""
+        if hasattr(self, '_key') and self._key.pkey and self._owns_memory:
+            _lib.higgaion_key_free(ctypes.byref(self._key))
+            self._key.pkey = None
 
     def verify(self, message: bytes, signature: bytes, domain: str) -> bool:
         if not self._key.pkey or not signature:
@@ -142,8 +153,11 @@ def GenerateKeypair(alg_name: str = "ML-DSA-87") -> tuple[PrivateKey, PublicKey]
     if not c_priv.pkey:
         raise HiggaionError(f"Failed to securely construct PQC keypair for '{alg_name}'")
 
-    # In C, generating assigns the combined key. We mirror the pointer exactly like we do in Go.
-    c_pub.pkey = c_priv.pkey
+    # Increment the OpenSSL reference count so that the public key independently
+    # owns its EVP_PKEY. Both PrivateKey and PublicKey can be GC'd in any order.
+    if not _lib.higgaion_key_up_ref(ctypes.byref(c_pub), ctypes.byref(c_priv)):
+        _lib.higgaion_key_free(ctypes.byref(c_priv))
+        raise HiggaionError(f"Failed to create public key reference for '{alg_name}'")
 
     priv = PrivateKey(c_priv)
     pub = PublicKey(c_pub)

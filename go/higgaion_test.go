@@ -17,6 +17,7 @@ func TestPQCSigningAndVerification(t *testing.T) {
 
 	// Defer memory freeing to prevent OpenSSL pointer leaks
 	defer priv.Free()
+	defer pub.Free()
 
 	// 1. Valid Signature Test
 	message := []byte("authorization_payload_12345")
@@ -59,6 +60,7 @@ func TestNilMessageSigning(t *testing.T) {
 		}
 	}
 	defer priv.Free()
+	defer pub.Free()
 
 	domain := "empty-payload-test"
 	sig, err := priv.Sign(nil, domain)
@@ -80,6 +82,7 @@ func TestDomainSeparationPrefixCollisionResistance(t *testing.T) {
 		}
 	}
 	defer priv.Free()
+	defer pub.Free()
 
 	// Old broken construction: ("A","BC") == ("AB","C") if using raw concatenation.
 	sig, err := priv.Sign([]byte("BC"), "A")
@@ -93,14 +96,16 @@ func TestDomainSeparationPrefixCollisionResistance(t *testing.T) {
 }
 
 func TestOverlongDomainRejected(t *testing.T) {
-	priv, _, err := GenerateKeypair("ML-DSA-87")
+	priv, pub, err := GenerateKeypair("ML-DSA-87")
 	if err != nil {
-		priv, _, err = GenerateKeypair("ED25519")
+		priv, pub, err = GenerateKeypair("ED25519")
 		if err != nil {
 			t.Fatalf("Failed to generate keypair: %v", err)
 		}
 	}
 	defer priv.Free()
+	defer pub.Free()
+	_ = pub // pub not used in this test but must be freed
 
 	longDomain := strings.Repeat("A", 4096) + "B" // 4097 bytes
 	_, err = priv.Sign([]byte("payload"), longDomain)

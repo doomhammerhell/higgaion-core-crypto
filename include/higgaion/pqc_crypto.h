@@ -29,6 +29,14 @@ void higgaion_key_init(HiggaionKey *key);
 /** Free internal resources of a HiggaionKey. */
 void higgaion_key_free(HiggaionKey *key);
 
+/**
+ * Increment the reference count of src->pkey and assign it to dst.
+ * This allows multiple HiggaionKey structs to safely share the same
+ * underlying EVP_PKEY, each independently freeable via higgaion_key_free().
+ * Returns true on success, false if src is NULL/empty.
+ */
+bool higgaion_key_up_ref(HiggaionKey *dst, const HiggaionKey *src);
+
 /** Generate an ML-DSA-87 or ML-KEM-1024 keypair via OpenSSL EVP. */
 void generate_keypair(HiggaionKey *key, const char *alg_name);
 

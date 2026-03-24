@@ -80,6 +80,20 @@ void higgaion_key_free(HiggaionKey *key) {
   }
 }
 
+bool higgaion_key_up_ref(HiggaionKey *dst, const HiggaionKey *src) {
+  if (!dst || !src || !src->pkey) {
+    if (dst)
+      dst->pkey = NULL;
+    return false;
+  }
+  if (EVP_PKEY_up_ref(src->pkey) != 1) {
+    dst->pkey = NULL;
+    return false;
+  }
+  dst->pkey = src->pkey;
+  return true;
+}
+
 /* ── PQC signing (ML-DSA-87) ─────────────────────────────────────────── */
 
 void pqc_sign(uint8_t **signature, size_t *sig_len, const uint8_t *message,

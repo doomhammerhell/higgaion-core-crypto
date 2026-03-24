@@ -32,7 +32,7 @@ type PublicKey struct {
 }
 
 // GenerateKeypair securely generates a new Post-Quantum keypair (e.g. "ML-DSA-87").
-// IMPORTANT: The caller must explicitly call Free() on the returned keys to prevent memory leaks!
+// IMPORTANT: The caller must explicitly call Free() on BOTH returned keys to prevent memory leaks!
 func GenerateKeypair(algName string) (*PrivateKey, *PublicKey, error) {
 	var priv PrivateKey
 	var pub PublicKey
@@ -54,10 +54,13 @@ func GenerateKeypair(algName string) (*PrivateKey, *PublicKey, error) {
 		return nil, nil, ErrKeyGeneration
 	}
 
-	// For the C API structure, verifying uses the exact same key struct. We will mirror the pointer
-	// to maintain idiomatic Go usage (priv, pub) without duplicating EVP memory in C.
-	// *Note: Calling Free() on the private key will free the underlying EVP pointer.*
-	pub.inner.pkey = priv.inner.pkey
+	// Increment the OpenSSL reference count so that the public key independently
+	// owns its EVP_PKEY. Both PrivateKey.Free() and PublicKey.Free() can now be
+	// called in any order without use-after-free or double-free.
+	if !C.higgaion_key_up_ref(&pub.inner, &priv.inner) {
+		C.higgaion_key_free(&priv.inner)
+		return nil, nil, ErrKeyGeneration
+	}
 
 	return &priv, &pub, nil
 }
@@ -103,6 +106,15 @@ func (k *PrivateKey) Sign(message []byte, domain string) ([]byte, error) {
 	C.free(unsafe.Pointer(cSig))
 
 	return goSig, nil
+}
+
+// Free explicitly destructs the underlying OpenSSL memory structures for the public key.
+// Must be called using `defer pub.Free()` immediately after generation.
+func (k *PublicKey) Free() {
+	if k.inner.pkey != nil {
+		C.higgaion_key_free(&k.inner)
+		k.inner.pkey = nil
+	}
 }
 
 // Verify mathematically verifies the domain-separated signature against the Open-Core C primitives.

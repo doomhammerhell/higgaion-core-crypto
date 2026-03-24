@@ -17,6 +17,7 @@ pub struct CHiggaionKey {
 extern "C" {
     fn higgaion_key_init(key: *mut CHiggaionKey);
     fn higgaion_key_free(key: *mut CHiggaionKey);
+    fn higgaion_key_up_ref(dst: *mut CHiggaionKey, src: *const CHiggaionKey) -> bool;
     #[link_name = "generate_keypair"]
     fn c_generate_keypair(key: *mut CHiggaionKey, alg_name: *const c_char);
     
@@ -57,6 +58,7 @@ pub struct PrivateKey {
 /// A mathematical isolation bound holding the public OpenSSL verification data.
 pub struct PublicKey {
     inner: CHiggaionKey,
+    owns_memory: bool,
 }
 
 impl Drop for PrivateKey {
@@ -150,6 +152,17 @@ impl PublicKey {
     }
 }
 
+impl Drop for PublicKey {
+    fn drop(&mut self) {
+        if self.owns_memory && !self.inner.pkey.is_null() {
+            unsafe {
+                higgaion_key_free(&mut self.inner);
+            }
+            self.inner.pkey = ptr::null_mut();
+        }
+    }
+}
+
 /// Generates a perfectly integrated OpenSSL Post-Quantum keypair and hands ownership
 /// perfectly to the Rust Memory manager.
 pub fn generate_keypair(alg_name: &str) -> Result<(PrivateKey, PublicKey), HiggaionError> {
@@ -171,8 +184,14 @@ pub fn generate_keypair(alg_name: &str) -> Result<(PrivateKey, PublicKey), Higga
         return Err(HiggaionError::KeyGenerationFailed);
     }
 
-    // Hand the combined EVP_PKEY reference seamlessly into the PublicKey struct
-    pub_inner.pkey = priv_inner.pkey;
+    // Increment the OpenSSL reference count so that the public key independently
+    // owns its EVP_PKEY. Both PrivateKey and PublicKey can be dropped in any order.
+    let up_ref_ok = unsafe { higgaion_key_up_ref(&mut pub_inner, &priv_inner) };
+    if !up_ref_ok {
+        // up_ref failed — free the private key and bail
+        unsafe { higgaion_key_free(&mut priv_inner); }
+        return Err(HiggaionError::KeyGenerationFailed);
+    }
 
     let priv_key = PrivateKey {
         inner: priv_inner,
@@ -181,6 +200,7 @@ pub fn generate_keypair(alg_name: &str) -> Result<(PrivateKey, PublicKey), Higga
     
     let pub_key = PublicKey {
         inner: pub_inner,
+        owns_memory: true,
     };
 
     Ok((priv_key, pub_key))
